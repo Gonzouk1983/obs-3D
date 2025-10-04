@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OBS 3D Item Viewer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:transparent; }
+    #info { position:fixed; top:8px; left:8px; padding:6px 10px; font:12px system-ui, sans-serif; color:#fff; background:rgba(0,0,0,.35); border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div id="info">Loading 3D…</div>
+  <script type="module">
+    const qp = new URLSearchParams(location.search);
+    const modelURL = qp.get("model") || "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Duck/glTF-Binary/Duck.glb";
+    const s  = parseFloat(qp.get("scale") || "1");
+    const rx = (parseFloat(qp.get("rx") || "0") * Math.PI) / 180;
+    const ry = (parseFloat(qp.get("ry") || "0") * Math.PI) / 180;
+    const rz = (parseFloat(qp.get("rz") || "0") * Math.PI) / 180;
+    const ao = parseFloat(qp.get("ao") || "0.5");
+    const sh = qp.get("shadow") !== "0";
+    const bg = qp.has("bg") ? qp.get("bg") : "transparent";
+    const camDist = parseFloat(qp.get("cam") || "2.5");
+    const spin = parseFloat(qp.get("spin") || "0"); // degrees per second Y-rotation
+    
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+    import { GLTFLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
+    import { DRACOLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/DRACOLoader.js";
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, premultipliedAlpha:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = sh;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    if (bg !== "transparent") {
+      document.body.style.background = decodeURIComponent(bg);
+      renderer.setClearColor(new THREE.Color(decodeURIComponent(bg)));
+      renderer.autoClearColor = true;
+    } else {
+      renderer.setClearColor(0x000000, 0);
+      renderer.autoClearColor = true;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 0.75, camDist);
+
+    const amb = new THREE.AmbientLight(0xffffff, ao);
+    scene.add(amb);
+    const key = new THREE.DirectionalLight(0xffffff, 1.0);
+    key.position.set(2, 3, 2);
+    key.castShadow = sh;
+    scene.add(key);
+
+    let ground = null;
+    if (sh) {
+      const geo = new THREE.PlaneGeometry(10,10);
+      const mat = new THREE.ShadowMaterial({ opacity:0.25 });
+      ground = new THREE.Mesh(geo, mat);
+      ground.rotation.x = -Math.PI/2;
+      ground.position.y = 0;
+      ground.receiveShadow = true;
+      scene.add(ground);
+    }
+
+    const loader = new GLTFLoader();
+    const draco = new DRACOLoader();
+    draco.setDecoderPath("https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/");
+    loader.setDRACOLoader(draco);
+
+    let mixer = null;
+    let root = null;
+    const info = document.getElementById('info');
+
+    loader.load(
+      modelURL,
+      (gltf) => {
+        root = gltf.scene;
+        root.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = sh;
+            o.receiveShadow = sh;
+          }
+        });
+        const box = new THREE.Box3().setFromObject(root);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        root.position.sub(center);
+        const scale = s / Math.max(size.x, size.y, size.z || 1);
+        root.scale.setScalar(scale);
+        root.rotation.set(rx, ry, rz);
+        scene.add(root);
+
+        if (gltf.animations && gltf.animations.length) {
+          mixer = new THREE.AnimationMixer(root);
+          const clip = gltf.animations[0];
+          mixer.clipAction(clip).play();
+        }
+
+        info.textContent = "";
+      },
+      (xhr) => { info.textContent = `Loading ${(xhr.loaded / (xhr.total || 1) * 100).toFixed(0)}%`; },
+      (err) => { info.textContent = "Failed to load model."; console.error(err); }
+    );
+
+    const clock = new THREE.Clock();
+    function animate() {
+      const dt = clock.getDelta();
+      if (mixer) mixer.update(dt);
+      if (root && spin) {
+        root.rotation.y += (spin * Math.PI / 180) * dt;
+      }
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
